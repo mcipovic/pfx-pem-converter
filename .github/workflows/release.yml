@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-24.04
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check tag against Cargo version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "v${VERSION}" ]]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match Cargo.toml version v${VERSION}."
+              echo "Bump [package] version in Cargo.toml before tagging."
+              exit 1
+            fi
+          fi
+
+  build:
+    name: Build release artifacts
+    needs: validate
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Collect assets and checksums
+        shell: bash
+        run: |
+          mkdir -p release
+          find dist -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) \
+            -exec cp -v {} release/ \;
+
+          test -n "$(find release -maxdepth 1 -type f -print -quit)"
+          cd release
+          sha256sum pfx-pem-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PFX ↔ PEM Converter ${{ github.ref_name }}
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

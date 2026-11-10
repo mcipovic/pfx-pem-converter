@@ -1,0 +1,162 @@
+name: Build artifacts
+
+on:
+  push:
+    branches: [develop, main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+            artifact: macos-arm64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: macos-x64
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            artifact: windows-x64
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: linux-x64
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.artifact }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.artifact }}-cargo-
+
+      - name: Resolve version and channel
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            CHANNEL=""
+          elif [[ "${GITHUB_REF_NAME}" == "develop" ]]; then
+            CHANNEL="-develop"
+          else
+            CHANNEL="-main"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "CHANNEL=${CHANNEL}" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Self-test (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: ./target/${{ matrix.target }}/release/pfx-pem --self-test
+
+      - name: Self-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process `
+            -FilePath ".\target\${{ matrix.target }}\release\pfx-pem.exe" `
+            -ArgumentList "--self-test" `
+            -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "self-test failed with exit code $($process.ExitCode)"
+          }
+
+      - name: GUI startup smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libgl1 libglx-mesa0 libegl1 libxkbcommon0 libx11-6
+          set +e
+          timeout 8 xvfb-run -a ./target/${{ matrix.target }}/release/pfx-pem \
+            > /tmp/pfx-pem-gui.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 124 ]; then
+            echo "GUI exited unexpectedly with code $code"
+            cat /tmp/pfx-pem-gui.log
+            exit 1
+          fi
+          echo "GUI stayed running for the duration of the smoke test."
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: bash scripts/package-macos.sh "${{ matrix.target }}" "$VERSION" "$CHANNEL" dist
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: bash scripts/package-linux.sh "${{ matrix.target }}" "$VERSION" "$CHANNEL" dist
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Version $env:VERSION -Channel $env:CHANNEL -OutDir dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  snapshot:
+    name: Publish develop snapshot
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Publish rolling prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          TAG="develop-latest"
+          NOTES=$(printf '%s\n' \
+            "Rolling development build from the latest \`develop\` commit." \
+            "" \
+            "- Commit: \`${GITHUB_SHA}\`" \
+            "- Version: \`${VERSION}\`" \
+            "" \
+            "These artifacts are unsigned and rebuilt on every push. Use a tagged release for stable builds.")
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --title "Development build" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" --title "Development build" --notes "$NOTES" --prerelease
+          fi
+          gh release upload "$TAG" release/* --clobber

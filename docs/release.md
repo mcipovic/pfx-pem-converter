@@ -15,6 +15,7 @@
 | `macos-arm64` | `macos-15` | `.app` in a `.zip` |
 | `macos-x64` | `macos-15-intel` | `.app` in a `.zip` |
 | `windows-x64` | `windows-2022` | portable `.exe` in a `.zip` |
+| `windows-arm64` | `windows-11-arm` | portable ARM64 `.exe` in a `.zip` |
 | `linux-x64` | `ubuntu-24.04` | binary in a `.tar.gz` |
 
 Branch builds also run the packaged binary with `--self-test` before uploading.
@@ -30,6 +31,7 @@ Tagged release (`v0.1.0`):
 pfx-pem-0.1.0-macos-arm64.zip
 pfx-pem-0.1.0-macos-x64.zip
 pfx-pem-0.1.0-windows-x64.zip
+pfx-pem-0.1.0-windows-arm64.zip
 pfx-pem-0.1.0-linux-x64.tar.gz
 SHA256SUMS
 ```
@@ -77,6 +79,10 @@ Before announcing a release:
 - [ ] PFX → PEM with an EC PFX.
 - [ ] PFX → PEM with a chain; confirm leaf → intermediate → root order.
 - [ ] PEM → PFX, then import the PFX into Windows Certificate Manager.
+- [ ] PEM → PFX in **Paste PEM** mode using clipboard content.
+- [ ] Copy key/cert/chain from the PFX → PEM result and paste into a text editor.
+- [ ] Auto/Light/Dark theme switch on each platform.
+- [ ] Windows ARM64 build starts and self-tests on a Windows-on-ARM runner.
 - [ ] Wrong password shows a clear error.
 - [ ] Output folder with existing files is not overwritten.
 - [ ] Drag and drop works on each platform.

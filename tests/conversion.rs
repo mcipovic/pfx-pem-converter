@@ -9,7 +9,7 @@ use openssl::symm::Cipher;
 use openssl::x509::X509;
 use pfx_pem_converter::{
     ConvertError, PemToPfxOptions, PfxToPemOptions, default_pfx_path, pem_file_plan, pem_to_pfx,
-    pfx_to_pem,
+    pem_to_pfx_from_text, pfx_to_pem,
 };
 use tempfile::tempdir;
 
@@ -635,4 +635,88 @@ fn output_permissions_are_private() {
             & 0o777;
         assert_eq!(mode, 0o600, "{file} should be private");
     }
+}
+
+#[test]
+fn pasted_pem_text_creates_a_valid_pfx() {
+    let key = rsa_key();
+    let cert = make_cert(&key, "pasted.example.com", None, false);
+    let key_pem = String::from_utf8(key.private_key_to_pem_pkcs8().unwrap()).unwrap();
+    let cert_pem = String::from_utf8(cert.to_pem().unwrap()).unwrap();
+
+    let dir = tempdir().unwrap();
+    let pfx_path = dir.path().join("pasted.pfx");
+    let report = pem_to_pfx_from_text(&key_pem, &cert_pem, None, "secret", pfx_path.clone())
+        .expect("create PFX from pasted text");
+
+    assert_eq!(report.certificate_count, 1);
+    assert_eq!(report.outputs, vec![pfx_path.clone()]);
+
+    let extracted = pfx_to_pem(&PfxToPemOptions {
+        input: pfx_path,
+        password: "secret".to_owned(),
+        output_dir: Some(dir.path().join("out")),
+    })
+    .expect("read PFX made from pasted text");
+    assert_eq!(extracted.certificate_count, 1);
+}
+
+#[test]
+fn pasted_pem_text_accepts_a_chain() {
+    let root_key = rsa_key();
+    let root = make_cert(&root_key, "Pasted Root", None, true);
+    let intermediate_key = rsa_key();
+    let intermediate = make_cert(
+        &intermediate_key,
+        "Pasted Intermediate",
+        Some((&root, &root_key)),
+        true,
+    );
+    let leaf_key = rsa_key();
+    let leaf = make_cert(
+        &leaf_key,
+        "pasted-chain.example.com",
+        Some((&intermediate, &intermediate_key)),
+        false,
+    );
+
+    let key_pem = String::from_utf8(leaf_key.private_key_to_pem_pkcs8().unwrap()).unwrap();
+    let cert_pem = String::from_utf8(leaf.to_pem().unwrap()).unwrap();
+    let mut chain_pem = String::from_utf8(intermediate.to_pem().unwrap()).unwrap();
+    chain_pem.push_str(&String::from_utf8(root.to_pem().unwrap()).unwrap());
+
+    let dir = tempdir().unwrap();
+    let pfx_path = dir.path().join("pasted-chain.pfx");
+    let report = pem_to_pfx_from_text(
+        &key_pem,
+        &cert_pem,
+        Some(&chain_pem),
+        "secret",
+        pfx_path.clone(),
+    )
+    .expect("create PFX with pasted chain");
+
+    assert_eq!(report.certificate_count, 3);
+
+    let out_dir = dir.path().join("out");
+    let extracted = pfx_to_pem(&PfxToPemOptions {
+        input: pfx_path,
+        password: "secret".to_owned(),
+        output_dir: Some(out_dir.clone()),
+    })
+    .expect("read PFX");
+
+    assert_eq!(extracted.certificate_count, 3);
+    let fullchain =
+        X509::stack_from_pem(&fs::read(out_dir.join("pasted-chain-fullchain.pem")).unwrap())
+            .unwrap();
+    let names: Vec<String> = fullchain.iter().map(common::common_name).collect();
+    assert_eq!(
+        names,
+        vec![
+            "pasted-chain.example.com",
+            "Pasted Intermediate",
+            "Pasted Root"
+        ]
+    );
 }

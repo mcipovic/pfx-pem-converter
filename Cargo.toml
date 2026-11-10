@@ -1,6 +1,6 @@
 [package]
 name = "pfx-pem-converter"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.95"
 description = "A small cross-platform GUI for converting PFX/PKCS#12 files to PEM and back"
@@ -19,6 +19,7 @@ name = "pfx_pem_converter"
 path = "src/lib.rs"
 
 [dependencies]
+arboard = "3"
 eframe = { version = "0.37", default-features = false, features = [
     "clipboard",
     "default_fonts",

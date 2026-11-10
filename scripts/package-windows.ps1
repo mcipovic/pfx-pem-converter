@@ -1,18 +1,20 @@
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [string]$Channel = "",
+    [string]$Target = "x86_64-pc-windows-msvc",
+    [string]$Artifact = "windows-x64",
     [string]$OutDir = "dist"
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$binary = Join-Path $root "target\x86_64-pc-windows-msvc\release\pfx-pem.exe"
+$binary = Join-Path $root "target\$Target\release\pfx-pem.exe"
 if (-not (Test-Path $binary)) {
     throw "Missing release binary: $binary"
 }
 
-$stageName = "pfx-pem-$Version$Channel-windows-x64"
+$stageName = "pfx-pem-$Version$Channel-$Artifact"
 $stage = Join-Path $root "target\package\$stageName"
 $destination = Join-Path $root $OutDir
 
@@ -28,7 +30,7 @@ Copy-Item (Join-Path $root "THIRD_PARTY.md") (Join-Path $stage "THIRD_PARTY.md")
 Copy-Item (Join-Path $root "LICENSES\OpenSSL.txt") (Join-Path $stage "OpenSSL-LICENSE.txt")
 
 $readme = @"
-PFX ↔ PEM Converter $Version — Windows x64
+PFX ↔ PEM Converter $Version — $Artifact
 ================================================
 
 1. Extract this archive to a folder you can write to.

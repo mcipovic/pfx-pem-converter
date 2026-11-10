@@ -22,6 +22,7 @@ dependencies are:
 |---|---|
 | `eframe` / `egui` | MIT OR Apache-2.0 |
 | `openssl` | Apache-2.0 |
+| `arboard` | MIT OR Apache-2.0 |
 | `rfd` | MIT |
 | `thiserror` | MIT OR Apache-2.0 |
 

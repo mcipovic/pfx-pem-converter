@@ -320,17 +320,66 @@ pub fn pfx_to_pem(options: &PfxToPemOptions) -> Result<ConversionReport, Convert
 pub fn pem_to_pfx(options: &PemToPfxOptions) -> Result<ConversionReport, ConvertError> {
     init()?;
 
-    if options.password.contains('\0') {
+    let key_bytes = read_file(&options.key)?;
+    let cert_bytes = read_file(&options.cert)?;
+    let chain_bytes = match &options.chain {
+        Some(path) => Some(read_file(path)?),
+        None => None,
+    };
+    let output = options
+        .output
+        .clone()
+        .unwrap_or_else(|| default_pfx_path(&options.cert));
+
+    create_pfx(
+        &key_bytes,
+        &cert_bytes,
+        chain_bytes.as_deref(),
+        &options.password,
+        output,
+    )
+}
+
+/// Creates a PFX from PEM text that is already in memory.
+///
+/// This is used by the UI's "Paste PEM" mode, where private keys and
+/// certificates are pasted directly instead of being read from files.
+pub fn pem_to_pfx_from_text(
+    key_pem: &str,
+    cert_pem: &str,
+    chain_pem: Option<&str>,
+    password: &str,
+    output: PathBuf,
+) -> Result<ConversionReport, ConvertError> {
+    init()?;
+
+    let chain_pem = chain_pem.filter(|text| !text.trim().is_empty());
+    create_pfx(
+        key_pem.as_bytes(),
+        cert_pem.as_bytes(),
+        chain_pem.map(str::as_bytes),
+        password,
+        output,
+    )
+}
+
+fn create_pfx(
+    key_bytes: &[u8],
+    cert_bytes: &[u8],
+    chain_bytes: Option<&[u8]>,
+    password: &str,
+    output: PathBuf,
+) -> Result<ConversionReport, ConvertError> {
+    if password.contains('\0') {
         return Err(ConvertError::NulInPassword);
     }
 
-    let key = parse_key(&read_file(&options.key)?)?;
-    let cert_bytes = read_file(&options.cert)?;
-    let mut certs = parse_certificates(&cert_bytes, CertKind::Leaf)?;
+    let key = parse_key(key_bytes)?;
+    let mut certs = parse_certificates(cert_bytes, CertKind::Leaf)?;
 
     if certs.is_empty() {
         return Err(ConvertError::InvalidCertificate {
-            detail: "The certificate file contains no certificates.".to_owned(),
+            detail: "The certificate input contains no certificates.".to_owned(),
         });
     }
 
@@ -348,16 +397,15 @@ pub fn pem_to_pfx(options: &PemToPfxOptions) -> Result<ConversionReport, Convert
     let mut warnings = Vec::new();
     if !certs.is_empty() {
         warnings.push(format!(
-            "The certificate file contained {} extra certificate(s); they were added to the chain.",
+            "The certificate input contained {} extra certificate(s); they were added to the chain.",
             certs.len()
         ));
     }
 
     let mut chain = certs;
 
-    if let Some(chain_path) = &options.chain {
-        let chain_bytes = read_file(chain_path)?;
-        let extra = parse_certificates(&chain_bytes, CertKind::Chain)?;
+    if let Some(chain_bytes) = chain_bytes {
+        let extra = parse_certificates(chain_bytes, CertKind::Chain)?;
         chain.extend(extra);
     }
 
@@ -389,14 +437,9 @@ pub fn pem_to_pfx(options: &PemToPfxOptions) -> Result<ConversionReport, Convert
         );
     }
 
-    if options.password.is_empty() {
+    if password.is_empty() {
         warnings.push("The PFX was created with an empty password.".to_owned());
     }
-
-    let output = options
-        .output
-        .clone()
-        .unwrap_or_else(|| default_pfx_path(&options.cert));
 
     if output.exists() {
         return Err(ConvertError::OutputExists(output));
@@ -435,7 +478,7 @@ pub fn pem_to_pfx(options: &PemToPfxOptions) -> Result<ConversionReport, Convert
     }
 
     let pfx = builder
-        .build2(&options.password)
+        .build2(password)
         .map_err(|e| ConvertError::CreatePfx {
             detail: ssl_errors(&e),
         })?;

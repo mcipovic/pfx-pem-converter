@@ -1,0 +1,18 @@
+fn main() {
+    println!("cargo:rerun-if-changed=assets/icon.ico");
+
+    #[cfg(windows)]
+    {
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+            let mut resource = winresource::WindowsResource::new();
+            resource.set_icon("assets/icon.ico");
+            resource.set("ProductName", "PFX PEM Converter");
+            resource.set("FileDescription", "PFX to PEM converter");
+            resource.set("LegalCopyright", "Copyright (c) 2026 Marko Cipovic");
+            resource.set("OriginalFilename", "pfx-pem.exe");
+            resource
+                .compile()
+                .expect("failed to compile Windows resources");
+        }
+    }
+}

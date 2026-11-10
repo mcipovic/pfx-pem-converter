@@ -1,0 +1,13 @@
+/target/
+/dist/
+.DS_Store
+
+# Never commit real certificates or keys.
+*.pfx
+*.p12
+*.key
+*.pem
+
+# ...except the throwaway fixture used by the self-test and integration tests.
+!tests/fixtures/*.pfx
+!tests/fixtures/*.pem

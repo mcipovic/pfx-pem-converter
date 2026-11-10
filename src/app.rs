@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use eframe::egui;
-use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke, TextEdit};
+use egui::{
+    Align, Color32, CornerRadius, FontId, Frame, Layout, Margin, RichText, Stroke, TextEdit,
+    TextStyle,
+};
 
 use pfx_pem_converter::{
     ConversionReport, ConvertError, PemToPfxOptions, PfxToPemOptions, default_pfx_path,
@@ -98,6 +101,24 @@ impl App {
             style.spacing.item_spacing = egui::vec2(8.0, 8.0);
             style.spacing.button_padding = egui::vec2(12.0, 6.0);
             style.interaction.selectable_labels = false;
+
+            // The defaults are too small on high-DPI displays. Bump every
+            // text role so the whole interface stays consistently readable.
+            style
+                .text_styles
+                .insert(TextStyle::Body, FontId::proportional(20.0));
+            style
+                .text_styles
+                .insert(TextStyle::Button, FontId::proportional(20.0));
+            style
+                .text_styles
+                .insert(TextStyle::Small, FontId::proportional(17.0));
+            style
+                .text_styles
+                .insert(TextStyle::Monospace, FontId::monospace(18.0));
+            style
+                .text_styles
+                .insert(TextStyle::Heading, FontId::proportional(32.0));
             style.visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
             style.visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
             style.visuals.widgets.active.corner_radius = CornerRadius::same(6);
@@ -319,7 +340,7 @@ impl App {
         )
         .fill(ACCENT)
         .corner_radius(CornerRadius::same(8))
-        .min_size(egui::vec2(ui.available_width(), 38.0));
+        .min_size(egui::vec2(ui.available_width(), 48.0));
         if ui.add(button).clicked() {
             self.convert();
             changed = false;
@@ -413,7 +434,7 @@ impl App {
         let button = egui::Button::new(RichText::new("Create PFX").strong().color(Color32::WHITE))
             .fill(ACCENT)
             .corner_radius(CornerRadius::same(8))
-            .min_size(egui::vec2(ui.available_width(), 38.0));
+            .min_size(egui::vec2(ui.available_width(), 48.0));
         if ui.add(button).clicked() {
             self.convert();
             changed = false;
@@ -457,8 +478,8 @@ impl App {
         let response = frame.show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new("●").color(color).size(13.0));
-                ui.label(RichText::new(&outcome.title).strong().size(15.0));
+                ui.label(RichText::new("●").color(color).size(17.0));
+                ui.label(RichText::new(&outcome.title).strong().size(21.0));
             });
 
             ui.label(&outcome.message);
@@ -549,7 +570,7 @@ impl eframe::App for App {
                     ui.add_space(6.0);
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("PFX ↔ PEM").size(26.0).strong());
+                        ui.label(RichText::new("PFX ↔ PEM").size(36.0).strong());
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
@@ -571,7 +592,7 @@ impl eframe::App for App {
                         if ui
                             .selectable_label(
                                 self.tab == Tab::PfxToPem,
-                                RichText::new("PFX → PEM").size(15.0).strong(),
+                                RichText::new("PFX → PEM").size(21.0).strong(),
                             )
                             .clicked()
                         {
@@ -581,7 +602,7 @@ impl eframe::App for App {
                         if ui
                             .selectable_label(
                                 self.tab == Tab::PemToPfx,
-                                RichText::new("PEM → PFX").size(15.0).strong(),
+                                RichText::new("PEM → PFX").size(21.0).strong(),
                             )
                             .clicked()
                         {
@@ -596,7 +617,7 @@ impl eframe::App for App {
                         .fill(ui.visuals().faint_bg_color)
                         .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
                         .corner_radius(CornerRadius::same(12))
-                        .inner_margin(Margin::same(16));
+                        .inner_margin(Margin::same(18));
 
                     card.show(ui, |ui| match self.tab {
                         Tab::PfxToPem => self.show_pfx_to_pem(ui),
@@ -672,20 +693,20 @@ fn path_row(
     button_text: &str,
     pick: impl FnOnce() -> Option<PathBuf>,
 ) -> bool {
-    ui.label(RichText::new(label).strong().size(13.0));
+    ui.label(RichText::new(label).strong().size(18.0));
 
     let mut changed = false;
     let response = ui
         .horizontal(|ui| {
-            let button_width = 98.0;
+            let button_width = 124.0;
             let text_width =
                 (ui.available_width() - button_width - ui.spacing().item_spacing.x).max(120.0);
             let response = ui.add_sized(
-                [text_width, 28.0],
+                [text_width, 38.0],
                 TextEdit::singleline(value).hint_text(hint),
             );
             if ui
-                .add_sized([button_width, 28.0], egui::Button::new(button_text))
+                .add_sized([button_width, 38.0], egui::Button::new(button_text))
                 .clicked()
                 && let Some(path) = pick()
             {
@@ -700,20 +721,20 @@ fn path_row(
 }
 
 fn password_row(ui: &mut egui::Ui, label: &str, value: &mut String, show: &mut bool) -> bool {
-    ui.label(RichText::new(label).strong().size(13.0));
+    ui.label(RichText::new(label).strong().size(18.0));
 
     let (changed, toggled) = ui
         .horizontal(|ui| {
-            let button_width = 64.0;
+            let button_width = 88.0;
             let text_width =
                 (ui.available_width() - button_width - ui.spacing().item_spacing.x).max(120.0);
             let response = ui.add_sized(
-                [text_width, 28.0],
+                [text_width, 38.0],
                 TextEdit::singleline(value).password(!*show),
             );
             let toggled = ui
                 .add_sized(
-                    [button_width, 28.0],
+                    [button_width, 38.0],
                     egui::Button::new(if *show { "Hide" } else { "Show" }),
                 )
                 .clicked();

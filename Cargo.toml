@@ -1,6 +1,6 @@
 [package]
 name = "pfx-pem-converter"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.95"
 description = "A small cross-platform GUI for converting PFX/PKCS#12 files to PEM and back"

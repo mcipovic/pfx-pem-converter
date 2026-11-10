@@ -9,7 +9,7 @@ use egui::{
 
 use pfx_pem_converter::{
     ConversionReport, ConvertError, PemToPfxOptions, PfxToPemOptions, default_pfx_path,
-    pem_file_plan, pem_to_pfx, pfx_to_pem,
+    pem_file_plan, pem_to_pfx, pem_to_pfx_from_text, pfx_to_pem,
 };
 
 const ACCENT: Color32 = Color32::from_rgb(13, 148, 136);
@@ -29,6 +29,17 @@ enum OutcomeKind {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PemInputMode {
+    Files,
+    Paste,
+}
+
+struct CopyItem {
+    label: &'static str,
+    content: String,
+}
+
 struct Outcome {
     kind: OutcomeKind,
     title: String,
@@ -37,6 +48,7 @@ struct Outcome {
     warnings: Vec<String>,
     details: Option<String>,
     output_dir: Option<PathBuf>,
+    copies: Vec<CopyItem>,
 }
 
 impl Outcome {
@@ -49,6 +61,7 @@ impl Outcome {
             warnings: report.warnings,
             details: None,
             output_dir: Some(report.output_dir),
+            copies: Vec::new(),
         }
     }
 
@@ -65,6 +78,7 @@ impl Outcome {
             warnings: Vec::new(),
             details,
             output_dir: None,
+            copies: Vec::new(),
         }
     }
 
@@ -87,6 +101,12 @@ pub struct App {
     export_password_confirm: String,
     show_export_password: bool,
     pfx_output_path: String,
+
+    pem_input_mode: PemInputMode,
+    pasted_key: String,
+    pasted_cert: String,
+    pasted_chain: String,
+    theme: egui::ThemePreference,
 
     outcome: Option<Outcome>,
     scroll_to_outcome: bool,
@@ -138,6 +158,11 @@ impl App {
             export_password_confirm: String::new(),
             show_export_password: false,
             pfx_output_path: String::new(),
+            pem_input_mode: PemInputMode::Files,
+            pasted_key: String::new(),
+            pasted_cert: String::new(),
+            pasted_chain: String::new(),
+            theme: egui::ThemePreference::System,
             outcome: None,
             scroll_to_outcome: false,
         }
@@ -186,6 +211,7 @@ impl App {
         cert: Option<PathBuf>,
         chain: Option<PathBuf>,
     ) {
+        self.pem_input_mode = PemInputMode::Files;
         if let Some(path) = key {
             self.key_path = path.display().to_string();
         }
@@ -247,22 +273,16 @@ impl App {
                         plural(report.outputs.len())
                     )
                 };
-                self.outcome = Some(Outcome::success(report, message));
+                let copies = pem_copies(&report.outputs);
+                let mut outcome = Outcome::success(report, message);
+                outcome.copies = copies;
+                self.outcome = Some(outcome);
             }
             Err(error) => self.outcome = Some(Outcome::from_error(error)),
         }
     }
 
     fn convert_pem_to_pfx(&mut self) {
-        if self.key_path.trim().is_empty() || self.cert_path.trim().is_empty() {
-            self.outcome = Some(Outcome::error(
-                "Missing input",
-                "Select both the private key and the certificate.",
-                None,
-            ));
-            return;
-        }
-
         if self.export_password != self.export_password_confirm {
             self.outcome = Some(Outcome::error(
                 "Passwords do not match",
@@ -272,15 +292,65 @@ impl App {
             return;
         }
 
-        let options = PemToPfxOptions {
-            key: PathBuf::from(self.key_path.trim()),
-            cert: PathBuf::from(self.cert_path.trim()),
-            chain: non_empty_path(&self.chain_path),
-            password: self.export_password.clone(),
-            output: non_empty_path(&self.pfx_output_path),
-        };
+        match self.pem_input_mode {
+            PemInputMode::Files => {
+                if self.key_path.trim().is_empty() || self.cert_path.trim().is_empty() {
+                    self.outcome = Some(Outcome::error(
+                        "Missing input",
+                        "Select both the private key and the certificate.",
+                        None,
+                    ));
+                    return;
+                }
 
-        match pem_to_pfx(&options) {
+                let options = PemToPfxOptions {
+                    key: PathBuf::from(self.key_path.trim()),
+                    cert: PathBuf::from(self.cert_path.trim()),
+                    chain: non_empty_path(&self.chain_path),
+                    password: self.export_password.clone(),
+                    output: non_empty_path(&self.pfx_output_path),
+                };
+
+                self.apply_pfx_result(pem_to_pfx(&options));
+            }
+            PemInputMode::Paste => {
+                if self.pasted_key.trim().is_empty() || self.pasted_cert.trim().is_empty() {
+                    self.outcome = Some(Outcome::error(
+                        "Missing input",
+                        "Paste both the private key and the certificate.",
+                        None,
+                    ));
+                    return;
+                }
+
+                let Some(output) = non_empty_path(&self.pfx_output_path) else {
+                    self.outcome = Some(Outcome::error(
+                        "Missing output",
+                        "Choose where to save the PFX file.",
+                        None,
+                    ));
+                    return;
+                };
+
+                let chain = if self.pasted_chain.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.pasted_chain.as_str())
+                };
+
+                self.apply_pfx_result(pem_to_pfx_from_text(
+                    &self.pasted_key,
+                    &self.pasted_cert,
+                    chain,
+                    &self.export_password,
+                    output,
+                ));
+            }
+        }
+    }
+
+    fn apply_pfx_result(&mut self, result: Result<ConversionReport, ConvertError>) {
+        match result {
             Ok(report) => {
                 let message = format!(
                     "Created a PFX with {} certificate{}.",
@@ -361,39 +431,96 @@ impl App {
 
     fn show_pem_to_pfx(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
+        let paste_mode = self.pem_input_mode == PemInputMode::Paste;
 
-        ui.label(
-            RichText::new("The private key must be unencrypted PEM (PKCS#8, PKCS#1 or SEC1).")
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Input").strong().size(15.0));
+            if ui
+                .selectable_value(
+                    &mut self.pem_input_mode,
+                    PemInputMode::Files,
+                    RichText::new("Files").size(17.0),
+                )
+                .clicked()
+            {
+                changed = true;
+            }
+            if ui
+                .selectable_value(
+                    &mut self.pem_input_mode,
+                    PemInputMode::Paste,
+                    RichText::new("Paste PEM").size(17.0),
+                )
+                .clicked()
+            {
+                changed = true;
+            }
+        });
+
+        if paste_mode {
+            ui.label(
+                RichText::new(
+                    "Paste the unencrypted PEM private key and certificate. Ctrl/Cmd+V also works inside the boxes.",
+                )
                 .small()
                 .color(ui.visuals().weak_text_color()),
-        );
+            );
 
-        changed |= path_row(
-            ui,
-            "Private key (PEM)",
-            "/path/to/private-key.pem",
-            &mut self.key_path,
-            "Browse…",
-            || pick_file("Select the private key", &["pem", "key"], None),
-        );
+            changed |= paste_area(
+                ui,
+                "Private key (PEM)",
+                &mut self.pasted_key,
+                4,
+                "-----BEGIN PRIVATE KEY-----",
+            );
+            changed |= paste_area(
+                ui,
+                "Certificate (PEM)",
+                &mut self.pasted_cert,
+                4,
+                "-----BEGIN CERTIFICATE-----",
+            );
+            changed |= paste_area(
+                ui,
+                "Certificate chain (optional)",
+                &mut self.pasted_chain,
+                3,
+                "-----BEGIN CERTIFICATE-----",
+            );
+        } else {
+            ui.label(
+                RichText::new("The private key must be unencrypted PEM (PKCS#8, PKCS#1 or SEC1).")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
 
-        changed |= path_row(
-            ui,
-            "Certificate (PEM or DER)",
-            "/path/to/certificate.pem",
-            &mut self.cert_path,
-            "Browse…",
-            || pick_file("Select the certificate", &["pem", "crt", "cer"], None),
-        );
+            changed |= path_row(
+                ui,
+                "Private key (PEM)",
+                "/path/to/private-key.pem",
+                &mut self.key_path,
+                "Browse…",
+                || pick_file("Select the private key", &["pem", "key"], None),
+            );
 
-        changed |= path_row(
-            ui,
-            "Certificate chain (optional)",
-            "/path/to/chain.pem",
-            &mut self.chain_path,
-            "Browse…",
-            || pick_file("Select the certificate chain", &["pem", "crt", "cer"], None),
-        );
+            changed |= path_row(
+                ui,
+                "Certificate (PEM or DER)",
+                "/path/to/certificate.pem",
+                &mut self.cert_path,
+                "Browse…",
+                || pick_file("Select the certificate", &["pem", "crt", "cer"], None),
+            );
+
+            changed |= path_row(
+                ui,
+                "Certificate chain (optional)",
+                "/path/to/chain.pem",
+                &mut self.chain_path,
+                "Browse…",
+                || pick_file("Select the certificate chain", &["pem", "crt", "cer"], None),
+            );
+        }
 
         changed |= password_row(
             ui,
@@ -409,18 +536,41 @@ impl App {
             &mut self.show_export_password,
         );
 
-        let save_name = default_pfx_name(&self.cert_path);
-        let save_start = last_directory(&self.cert_path);
+        let (save_name, save_start) = if paste_mode {
+            ("certificate.pfx".to_owned(), None)
+        } else {
+            (
+                default_pfx_name(&self.cert_path),
+                last_directory(&self.cert_path),
+            )
+        };
+
         changed |= path_row(
             ui,
-            "Output PFX (optional)",
-            "Same folder as the certificate",
+            if paste_mode {
+                "Output PFX"
+            } else {
+                "Output PFX (optional)"
+            },
+            if paste_mode {
+                "Required — choose a file"
+            } else {
+                "Same folder as the certificate"
+            },
             &mut self.pfx_output_path,
             "Save as…",
             || pick_save("Save the PFX file", &save_name, save_start),
         );
 
-        if !self.cert_path.trim().is_empty() {
+        if paste_mode {
+            if self.pfx_output_path.trim().is_empty() {
+                ui.label(
+                    RichText::new("Choose where to save the PFX when the input is pasted.")
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
+        } else if !self.cert_path.trim().is_empty() {
             let suggested = default_pfx_path(Path::new(self.cert_path.trim()));
             ui.label(
                 RichText::new(format!("Defaults to {}", suggested.display()))
@@ -493,6 +643,26 @@ impl App {
                             .color(WARNING),
                     );
                 }
+            }
+
+            if !outcome.copies.is_empty() {
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    for item in &outcome.copies {
+                        if ui
+                            .button(item.label)
+                            .on_hover_text("Copy the PEM contents to the clipboard")
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(item.content.clone());
+                        }
+                    }
+                });
+                ui.label(
+                    RichText::new("Copy a PEM block and paste it wherever you need it.")
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
             }
 
             if !outcome.files.is_empty() {
@@ -569,6 +739,7 @@ impl eframe::App for App {
                 .show(ui, |ui| {
                     ui.add_space(6.0);
 
+                    let mut theme_changed = false;
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("PFX ↔ PEM").size(36.0).strong());
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -577,8 +748,47 @@ impl eframe::App for App {
                                     .small()
                                     .color(ui.visuals().weak_text_color()),
                             );
+                            ui.add_space(12.0);
+                            if ui
+                                .selectable_value(
+                                    &mut self.theme,
+                                    egui::ThemePreference::Dark,
+                                    RichText::new("Dark").size(16.0),
+                                )
+                                .clicked()
+                            {
+                                theme_changed = true;
+                            }
+                            if ui
+                                .selectable_value(
+                                    &mut self.theme,
+                                    egui::ThemePreference::Light,
+                                    RichText::new("Light").size(16.0),
+                                )
+                                .clicked()
+                            {
+                                theme_changed = true;
+                            }
+                            if ui
+                                .selectable_value(
+                                    &mut self.theme,
+                                    egui::ThemePreference::System,
+                                    RichText::new("Auto").size(16.0),
+                                )
+                                .clicked()
+                            {
+                                theme_changed = true;
+                            }
+                            ui.label(
+                                RichText::new("Theme")
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
                         });
                     });
+                    if theme_changed {
+                        ui.ctx().set_theme(self.theme);
+                    }
                     ui.label(
                         RichText::new(
                             "Convert PKCS#12 bundles to PEM and back. Everything stays on this computer.",
@@ -665,6 +875,27 @@ fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
 
+fn pem_copies(files: &[PathBuf]) -> Vec<CopyItem> {
+    files
+        .iter()
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy();
+            let label = if name.ends_with("-private-key.pem") {
+                "Copy key"
+            } else if name.ends_with("-certificate.pem") {
+                "Copy cert"
+            } else if name.ends_with("-fullchain.pem") {
+                "Copy chain"
+            } else {
+                return None;
+            };
+
+            let content = std::fs::read_to_string(path).ok()?;
+            Some(CopyItem { label, content })
+        })
+        .collect()
+}
+
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
@@ -683,6 +914,50 @@ fn install_fonts(ctx: &egui::Context) {
             .push("dejavu".to_owned());
     }
     ctx.set_fonts(fonts);
+}
+
+fn paste_area(ui: &mut egui::Ui, label: &str, value: &mut String, rows: usize, hint: &str) -> bool {
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(label).strong().size(18.0));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui
+                .button("Paste")
+                .on_hover_text("Read text from the clipboard (Ctrl/Cmd+V also works)")
+                .clicked()
+                && let Some(text) = read_clipboard_text()
+            {
+                *value = text;
+                changed = true;
+            }
+        });
+    });
+
+    // A pasted PEM block can be dozens of lines long. Keep the editor at a
+    // predictable height and scroll inside it instead of pushing the rest of
+    // the form off screen.
+    let max_height = (rows as f32 * 26.0).clamp(90.0, 150.0);
+    let response = egui::ScrollArea::vertical()
+        .id_salt(label)
+        .max_height(max_height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.add(
+                TextEdit::multiline(value)
+                    .font(TextStyle::Monospace)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(rows)
+                    .hint_text(hint),
+            )
+        })
+        .inner;
+
+    changed | response.changed()
+}
+
+fn read_clipboard_text() -> Option<String> {
+    arboard::Clipboard::new().ok()?.get_text().ok()
 }
 
 fn path_row(

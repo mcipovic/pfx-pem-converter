@@ -11,9 +11,12 @@ executable for **Windows, macOS, and Linux**.
 ## Features
 
 - **PFX → PEM**: writes the private key, the leaf certificate, and the full
-  certificate chain (ordered leaf → intermediate → root).
+  certificate chain (ordered leaf → intermediate → root), with one-click
+  **Copy key / Copy cert / Copy chain** buttons.
 - **PEM → PFX**: combines an unencrypted private key, a certificate, and an
-  optional chain into a password-protected PFX.
+  optional chain into a password-protected PFX — from files or directly from
+  pasted PEM text.
+- **Auto / Light / Dark** theme switch in the header.
 - Reads modern AES/PBES2 PFX files *and* old RC2/3DES PFX files.
 - Creates PFX files with 3DES/SHA-1 encryption for maximum compatibility with
   Windows, IIS, and older Java keystores.
@@ -32,6 +35,7 @@ Grab the latest build from the
 | macOS (Apple Silicon) | `pfx-pem-<version>-macos-arm64.zip` |
 | macOS (Intel) | `pfx-pem-<version>-macos-x64.zip` |
 | Windows 10/11 (x64) | `pfx-pem-<version>-windows-x64.zip` |
+| Windows 10/11 (ARM64) | `pfx-pem-<version>-windows-arm64.zip` |
 | Linux (x64) | `pfx-pem-<version>-linux-x64.tar.gz` |
 
 Every release includes a `SHA256SUMS` file. Development builds from the
@@ -44,7 +48,8 @@ build** (tag `develop-latest`).
   right-click → **Open**. If macOS says the app is damaged, run:
   `xattr -dr com.apple.quarantine "/Applications/PFX PEM Converter.app"`.
 - **Windows:** SmartScreen may warn because the executable is unsigned. Choose
-  **More info → Run anyway**.
+  **More info → Run anyway**. Both x64 and ARM64 builds are available; use the
+  ARM64 ZIP on Snapdragon/Windows-on-ARM devices.
 - **Linux:** extract and run `./pfx-pem`. A normal desktop session with OpenGL
   (X11 or Wayland) is required. The release binary is built on Ubuntu 24.04 and
   needs glibc 2.39 or newer; build from source for older distributions.
@@ -59,6 +64,11 @@ build** (tag `develop-latest`).
 3. Optionally choose an output folder (defaults to the PFX's folder).
 4. Click **Convert to PEM**.
 
+Use **Copy key**, **Copy cert**, or **Copy chain** to put the complete PEM block
+on the clipboard without opening the generated files.
+
+![Copy key, certificate, or chain from the result](docs/screenshot-copy.png)
+
 For `server.pfx`, the app writes:
 
 | File | Contents |
@@ -72,11 +82,16 @@ accordingly.
 
 ### PEM → PFX
 
-1. Select the unencrypted private key (PKCS#8, PKCS#1, or SEC1 PEM).
-2. Select the leaf certificate (PEM or DER).
-3. Optionally select a chain file (PEM or DER, one or more certificates).
+Choose **Files** to select the key, certificate, and optional chain from disk,
+or **Paste PEM** to paste the PEM blocks directly (the **Paste** buttons read
+the clipboard; Ctrl/Cmd+V also works inside the boxes).
+
+1. Select/paste the unencrypted private key (PKCS#8, PKCS#1, or SEC1 PEM).
+2. Select/paste the leaf certificate (PEM or DER).
+3. Optionally add a chain (PEM or DER, one or more certificates).
 4. Enter a PFX password and confirm it.
-5. Click **Create PFX**.
+5. Choose where to save the PFX.
+6. Click **Create PFX**.
 
 Encrypted private keys are not supported directly. Decrypt one first:
 
@@ -154,6 +169,8 @@ docs/             release documentation
 
 - The application contains no networking code and does not contact any server.
 - Passwords are only held in memory for the duration of a conversion.
+- **Copy key** puts the unencrypted private key on the system clipboard; clear
+  the clipboard after pasting it somewhere safe.
 - Existing files are never overwritten.
 - On macOS and Linux, all output files are created with mode `0600`.
 - The app is not code-signed; releases include SHA-256 checksums.
